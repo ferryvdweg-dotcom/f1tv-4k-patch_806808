@@ -609,36 +609,8 @@ fi
 # (HDR10, or a clean SDR downconvert), the same path YouTube HLG uses on an HDR10
 # TV. On genuinely HDR-capable devices this is a no-op. Set F1TV_DISPLAY_HDR_SPOOF=0
 # to disable and fall back to stock behaviour (SDR-capable devices cap at 1620p).
-if [[ "${F1TV_DISPLAY_HDR_SPOOF:-1}" != "0" ]]; then
-    info "Forcing display HDR-type support (unlocks the 2160p tier)..."
-    DEVPARAMS="$(find "${DECOMPILED}" -name 'DeviceParameters.smali' -path '*/tiledmedia/*' -print -quit)"
-    if [[ -n "${DEVPARAMS}" ]]; then
-        ok "Found: ${DEVPARAMS#${WORKDIR}/}"
-        python3 - "${DEVPARAMS}" << 'PYEOF'
-import sys, re
-path = sys.argv[1]
-with open(path) as f:
-    content = f.read()
-new = """.method private static doesDisplaySupport(Landroid/content/Context;I)Z
-    .locals 1
-
-    const/4 v0, 0x1
-
-    return v0
-.end method"""
-content, n = re.subn(r'\.method private static doesDisplaySupport\(Landroid/content/Context;I\)Z.*?\.end method', new, content, flags=re.DOTALL)
-if n != 1:
-    print(f"ERROR: doesDisplaySupport not found ({n})", file=sys.stderr); sys.exit(1)
-with open(path, 'w') as f:
-    f.write(content)
-print("doesDisplaySupport -> always true (display reports all HDR types)")
-PYEOF
-        [[ $? -eq 0 ]] || die "Display HDR spoof patch failed"
-        ok "Display HDR spoof patch applied"
-    else
-        warn "DeviceParameters.smali not found, skipping display HDR spoof"
-    fi
-fi
+# ─── Spoof display HDR capability (DISABLED FOR TESTING) ─────────────
+info "Skipping display HDR spoof patch..."
 
 # ─── Patch version name ─────────────────────────────────────────────────────
 
