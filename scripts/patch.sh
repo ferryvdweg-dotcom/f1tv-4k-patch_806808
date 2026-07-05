@@ -515,7 +515,7 @@ if count == 0:
 
 with open(path, 'w') as f:
     f.write(content)
-print(f"Patched getIsBt2020HlgExtensionSupported -> true")
+print(f"Patched getIsBt2020HlgExtensionSupported -> false")
 PYEOF
 
         [[ $? -eq 0 ]] || die "HLG bypass patch failed"
