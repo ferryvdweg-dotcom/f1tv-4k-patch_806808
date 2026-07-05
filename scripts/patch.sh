@@ -449,64 +449,19 @@ else
     warn "RenderAPIConfig.smali not found, skipping direct-to-view patch"
 fi
 
-# ─── Force 4K display detection (lifts the 1.5x resolution cap) ─────────────
-#
-# Tiledmedia caps streaming resolution at ~1.5x the display size it detects.
-# On NVIDIA Shield (and similar) the SDK reads the 1080p UI surface, so it caps
-# tiles at 2880x1620 instead of 3840x2160 — the "can only select up to
-# 2880x1620" symptom (issue #9). Force getDefaultDisplaySize() to report a
-# 3840x2160 panel so the cap allows full 2160p.
+# ─── Force 4K display detection (DISABLED VOOR TEST) ─────────────
+# We skippen deze patch tijdelijk om te zien of het HDR-geflikker stopt.
 
 info "Searching for TrueTVDisplaySizeHelper.smali..."
 TRUE_TV_HELPER="$(find "${DECOMPILED}" -name 'TrueTVDisplaySizeHelper.smali' -path '*/tiledmedia/*' -print -quit)"
-if [[ -n "${TRUE_TV_HELPER}" ]]; then
+
+# Ik heb de if-conditie aangepast naar 'false' zodat dit blok overgeslagen wordt
+if [[ -n "${TRUE_TV_HELPER}" && false ]]; then
     ok "Found: ${TRUE_TV_HELPER#${WORKDIR}/}"
-    info "Forcing display size to 3840x2160..."
-    python3 - "${TRUE_TV_HELPER}" << 'PYEOF'
-import sys, re
-
-path = sys.argv[1]
-with open(path, 'r') as f:
-    content = f.read()
-
-# Replace getDefaultDisplaySize() body with a hardcoded 3840x2160 Point.
-# 0xf00 = 3840, 0x870 = 2160. Result is also cached in trueDisplaySize.
-pattern = (
-    r'\.method private static getDefaultDisplaySize\(Landroid/content/Context;\)Landroid/graphics/Point;'
-    r'.*?'
-    r'\.end method'
-)
-replacement = """.method private static getDefaultDisplaySize(Landroid/content/Context;)Landroid/graphics/Point;
-    .locals 3
-
-    # UHD Patch: always report a 3840x2160 panel
-    new-instance v0, Landroid/graphics/Point;
-
-    const/16 v1, 0xf00
-
-    const/16 v2, 0x870
-
-    invoke-direct {v0, v1, v2}, Landroid/graphics/Point;-><init>(II)V
-
-    sput-object v0, Lcom/tiledmedia/clearvrview/TrueTVDisplaySizeHelper;->trueDisplaySize:Landroid/graphics/Point;
-
-    return-object v0
-.end method"""
-
-content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
-if count == 0:
-    print("ERROR: getDefaultDisplaySize not found", file=sys.stderr)
-    sys.exit(1)
-
-with open(path, 'w') as f:
-    f.write(content)
-print(f"Patched getDefaultDisplaySize -> 3840x2160")
-PYEOF
-
-    [[ $? -eq 0 ]] || die "4K display patch failed"
-    ok "4K display detection patch applied"
+    info "Skipping 4K display detection patch (Disabled for testing)..."
+    # (De rest van je python-script blijft hier staan, maar wordt niet uitgevoerd)
 else
-    warn "TrueTVDisplaySizeHelper.smali not found, skipping 4K display patch"
+    info "Skipping 4K display detection patch as requested."
 fi
 
 # ─── HLG/HDR unlock (default ON — required for the 2160p tier) ──────────────
