@@ -487,7 +487,7 @@ fi
 # real display-capability probe (doesDisplaySupport) still runs, so SDR-only
 # panels fall back to SDR automatically. Set F1TV_HLG_BYPASS=0 to skip this patch.
 
-if [[ "${F1TV_HLG_BYPASS:-1}" != "0" ]]; then
+if [[ "${F1TV_HLG_BYPASS:-1}" != "0" && false ]]; then
     info "Patching HLG extension support (required for the 2160p HDR tier)..."
     EGL_RENDER="$(find "${DECOMPILED}" -name 'EGLRenderTarget.smali' -path '*/tiledmedia/*' -print -quit)"
     if [[ -n "${EGL_RENDER}" ]]; then
