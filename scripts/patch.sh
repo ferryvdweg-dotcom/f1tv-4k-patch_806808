@@ -316,23 +316,29 @@ with open(smali_path, 'r') as f:
 # causing the backend to serve a lower resolution tier (2880x1620 instead of 3840x2160).
 
 patches = [
-    # Override secureDecoderMaximumTileSlotCount: 0 → 16 (matches Oculus Go/Quest profiles)
+    # Override secureDecoderMaximumTileSlotCount: 0 → 16
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxNumberOfSecureHEVCSamples:I',
         '    const/16 v2, 0x10',
         'secureDecoderMaximumTileSlotCount → 16'
     ),
-    # Override maxTileRows: 0 → 5 (matches Chromecast/Google TV profile)
+    # Override maxTileRows: 0 → 5
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxTileRows:I',
         '    const/4 v2, 0x5',
         'maxTileRows → 5'
     ),
-    # Override maxTileColumns: 0 → 5 (matches Chromecast/Google TV profile)
+    # Override maxTileColumns: 0 → 5
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxTileColumns:I',
         '    const/4 v2, 0x5',
         'maxTileColumns → 5'
+    ),
+    # FORCE SDR: Override isHDR flag to false
+    (
+        '    iget-boolean v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->isHDR:Z',
+        '    const/4 v2, 0x0',
+        'isHDR → False (Force SDR)'
     ),
 ]
 
