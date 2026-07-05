@@ -410,29 +410,13 @@ else
 fi
 
 # ─── Patch NRP blit mode to NATIVE_ANDROID_DIRECT_TO_VIEW ──────────────────
-#
-# Tiledmedia's default blit mode (AUTO_DETECT) routes decoded frames through
-# GPU tile composition via SurfaceTexture → EGL → swapBuffers. This causes
-# frame drops on weaker GPUs and may fail on devices that don't support
-# intermediate resolutions during the quality ramp (e.g. 2560x1620).
-# The SDK has a built-in NATIVE_ANDROID_DIRECT_TO_VIEW mode that bypasses
-# GPU composition and outputs the decoder directly to the SurfaceView.
-#
-# DEFAULT OFF. direct-to-view tags the output surface with the CONTENT's transfer
-# (HLG for F1 UHD) and does no gamut conversion. On a panel that accepts HDR10 but
-# not HLG the compositor can't switch modes and shows the BT.2020 frames through
-# an SDR/Rec.709 surface with no conversion — i.e. washed-out colours. The default
-# EGL/GL render path (this patch skipped) composites the tiles and does a correct
-# BT.2020→Rec.709 conversion, giving accurate 4K. Set F1TV_DIRECT_TO_VIEW=1 to
-# force direct-to-view on weak/Amlogic GPUs that drop frames on the GL path
-# (accepting the washed-out HDR look as the tradeoff).
+# Forced patch: Dwingt NATIVE_ANDROID_DIRECT_TO_VIEW om EGL-rendering crashes
+# op Philips OLED schermen te voorkomen.
 
 RENDER_CONFIG="$(find "${DECOMPILED}" -name 'RenderAPIConfig.smali' -path '*/tiledmedia/*' -print -quit 2>/dev/null || true)"
 
-if [[ "${F1TV_DIRECT_TO_VIEW:-0}" == "0" ]]; then
-    info "Using the EGL/GL render path for correct 4K colours (set F1TV_DIRECT_TO_VIEW=1 for weak/Amlogic GPUs)"
-elif [[ -n "${RENDER_CONFIG}" && -f "${RENDER_CONFIG}" ]]; then
-    info "Patching NRP blit mode to direct-to-view (opt-in, for weak/Amlogic GPUs)..."
+if [[ -n "${RENDER_CONFIG}" && -f "${RENDER_CONFIG}" ]]; then
+    info "Forcing NRP blit mode to direct-to-view (mandatory for Philips OLED stability)..."
     python3 - "${RENDER_CONFIG}" << 'PYEOF'
 import sys
 
@@ -441,13 +425,6 @@ with open(path, 'r') as f:
     content = f.read()
 
 # Patch getNRPTextureBlitMode() to always return NATIVE_ANDROID_DIRECT_TO_VIEW.
-# Original:
-#   iget-object v0, p0, ...->nrpTextureBlitMode
-#   return-object v0
-#
-# Patched:
-#   return NATIVE_ANDROID_DIRECT_TO_VIEW unconditionally
-
 old = """    iget-object v0, p0, Lcom/tiledmedia/clearvrview/RenderAPIConfig;->nrpTextureBlitMode:Lcom/tiledmedia/clearvrenums/NRPTextureBlitMode;
 
     return-object v0"""
@@ -464,10 +441,10 @@ content = content.replace(old, new, 1)
 
 with open(path, 'w') as f:
     f.write(content)
-print(f"  Patched {path}")
+print(f"   Patched {path}")
 PYEOF
 
-    [[ $? -eq 0 ]] && ok "NRP direct-to-view patch applied (all devices)" || warn "NRP direct-to-view patch failed"
+    [[ $? -eq 0 ]] && ok "NRP direct-to-view patch forced" || warn "NRP direct-to-view patch failed"
 else
     warn "RenderAPIConfig.smali not found, skipping direct-to-view patch"
 fi
