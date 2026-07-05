@@ -358,7 +358,7 @@ if patched == 0:
 with open(smali_path, 'w') as f:
     f.write(content)
 
-print(f"Patched {patched}/3 ClearVR decoder capabilities")
+print(f"Patched {patched}/4 ClearVR decoder capabilities")
 PYEOF
 
     [[ $? -eq 0 ]] || die "ClearVR capability patch failed"
