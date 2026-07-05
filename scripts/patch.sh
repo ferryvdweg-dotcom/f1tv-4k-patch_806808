@@ -54,6 +54,71 @@ OUTPUT_DIR="$(realpath "$2")"
 [[ -f "${APKM_PATH}" ]] || die "File not found: ${APKM_PATH}"
 mkdir -p "${OUTPUT_DIR}"
 
+PATCH_PROFILE="${F1TV_PATCH_PROFILE:-shield-quality}"
+if [[ "${F1TV_SMOOTH_TV:-0}" == "1" ]]; then
+    PATCH_PROFILE="android-tv-smooth"
+fi
+
+case "${PATCH_PROFILE}" in
+    uhd|shield-quality)
+        PATCH_PROFILE="shield-quality"
+        F1TV_DIRECT_TO_VIEW="${F1TV_DIRECT_TO_VIEW:-0}"
+        F1TV_PQ_REROUTE="${F1TV_PQ_REROUTE:-1}"
+        F1TV_DISABLE_NVIDIA_QUIRK="${F1TV_DISABLE_NVIDIA_QUIRK:-1}"
+        F1TV_MODEL_SPOOF="${F1TV_MODEL_SPOOF:-Chromecast}"
+        F1TV_DECODER_TILE_SLOTS="${F1TV_DECODER_TILE_SLOTS:-16}"
+        F1TV_DECODER_TILE_ROWS="${F1TV_DECODER_TILE_ROWS:-5}"
+        F1TV_DECODER_TILE_COLUMNS="${F1TV_DECODER_TILE_COLUMNS:-5}"
+        F1TV_DISPLAY_WIDTH="${F1TV_DISPLAY_WIDTH:-3840}"
+        F1TV_DISPLAY_HEIGHT="${F1TV_DISPLAY_HEIGHT:-2160}"
+        VERSION_SUFFIX="${F1TV_VERSION_SUFFIX:--UHD}"
+        OUTPUT_BASENAME="${F1TV_OUTPUT_BASENAME:-f1tv-uhd-patched.apkm}"
+        info "Patch profile: shield-quality (EGL/GL render path, full 2160p target)"
+        ;;
+    smooth-tv|android-tv-smooth)
+        PATCH_PROFILE="android-tv-smooth"
+        F1TV_DIRECT_TO_VIEW="${F1TV_DIRECT_TO_VIEW:-1}"
+        F1TV_PQ_REROUTE="${F1TV_PQ_REROUTE:-0}"
+        F1TV_DISABLE_NVIDIA_QUIRK="${F1TV_DISABLE_NVIDIA_QUIRK:-0}"
+        F1TV_MODEL_SPOOF="${F1TV_MODEL_SPOOF:-Chromecast}"
+        F1TV_DECODER_TILE_SLOTS="${F1TV_DECODER_TILE_SLOTS:-16}"
+        F1TV_DECODER_TILE_ROWS="${F1TV_DECODER_TILE_ROWS:-5}"
+        F1TV_DECODER_TILE_COLUMNS="${F1TV_DECODER_TILE_COLUMNS:-5}"
+        F1TV_DISPLAY_WIDTH="${F1TV_DISPLAY_WIDTH:-3840}"
+        F1TV_DISPLAY_HEIGHT="${F1TV_DISPLAY_HEIGHT:-2160}"
+        VERSION_SUFFIX="${F1TV_VERSION_SUFFIX:--UHD-SMOOTH}"
+        OUTPUT_BASENAME="${F1TV_OUTPUT_BASENAME:-f1tv-uhd-smooth-tv-patched.apkm}"
+        info "Patch profile: android-tv-smooth (direct-to-view, full 2160p target)"
+        ;;
+    android-tv-safe)
+        F1TV_DIRECT_TO_VIEW="${F1TV_DIRECT_TO_VIEW:-1}"
+        F1TV_PQ_REROUTE="${F1TV_PQ_REROUTE:-0}"
+        F1TV_DISABLE_NVIDIA_QUIRK="${F1TV_DISABLE_NVIDIA_QUIRK:-0}"
+        F1TV_MODEL_SPOOF="${F1TV_MODEL_SPOOF:-Chromecast}"
+        F1TV_DECODER_TILE_SLOTS="${F1TV_DECODER_TILE_SLOTS:-8}"
+        F1TV_DECODER_TILE_ROWS="${F1TV_DECODER_TILE_ROWS:-4}"
+        F1TV_DECODER_TILE_COLUMNS="${F1TV_DECODER_TILE_COLUMNS:-4}"
+        F1TV_DISPLAY_WIDTH="${F1TV_DISPLAY_WIDTH:-1920}"
+        F1TV_DISPLAY_HEIGHT="${F1TV_DISPLAY_HEIGHT:-1080}"
+        VERSION_SUFFIX="${F1TV_VERSION_SUFFIX:--UHD-SAFE}"
+        OUTPUT_BASENAME="${F1TV_OUTPUT_BASENAME:-f1tv-uhd-android-tv-safe-patched.apkm}"
+        info "Patch profile: android-tv-safe (direct-to-view, reduced 1620p target)"
+        ;;
+    *)
+        die "Unsupported F1TV_PATCH_PROFILE: ${PATCH_PROFILE}"
+        ;;
+esac
+for numeric_setting in F1TV_DECODER_TILE_SLOTS F1TV_DECODER_TILE_ROWS F1TV_DECODER_TILE_COLUMNS F1TV_DISPLAY_WIDTH F1TV_DISPLAY_HEIGHT; do
+    value="${!numeric_setting}"
+    [[ "${value}" =~ ^[0-9]+$ ]] || die "${numeric_setting} must be a positive integer, got '${value}'"
+done
+(( F1TV_DECODER_TILE_SLOTS >= 1 && F1TV_DECODER_TILE_SLOTS <= 32767 )) || die "F1TV_DECODER_TILE_SLOTS must be between 1 and 32767"
+(( F1TV_DECODER_TILE_ROWS >= 1 && F1TV_DECODER_TILE_ROWS <= 15 )) || die "F1TV_DECODER_TILE_ROWS must be between 1 and 15"
+(( F1TV_DECODER_TILE_COLUMNS >= 1 && F1TV_DECODER_TILE_COLUMNS <= 15 )) || die "F1TV_DECODER_TILE_COLUMNS must be between 1 and 15"
+(( F1TV_DISPLAY_WIDTH >= 1 && F1TV_DISPLAY_WIDTH <= 32767 )) || die "F1TV_DISPLAY_WIDTH must be between 1 and 32767"
+(( F1TV_DISPLAY_HEIGHT >= 1 && F1TV_DISPLAY_HEIGHT <= 32767 )) || die "F1TV_DISPLAY_HEIGHT must be between 1 and 32767"
+info "Profile settings: model=${F1TV_MODEL_SPOOF}, display=${F1TV_DISPLAY_WIDTH}x${F1TV_DISPLAY_HEIGHT}, decoder=${F1TV_DECODER_TILE_SLOTS}/${F1TV_DECODER_TILE_ROWS}/${F1TV_DECODER_TILE_COLUMNS}"
+
 check_prereqs
 
 # ─── Create temp working directory ────────────────────────────────────────────
@@ -260,23 +325,26 @@ fi
 
 # ─── Spoof device model in request header ────────────────────────────────────
 
-info "Searching for TvApplication.smali..."
-TVAPP_SMALI="$(find "${DECOMPILED}" -name 'TvApplication.smali' -path '*/avs/f1/*' -print -quit)"
-if [[ -n "${TVAPP_SMALI}" ]]; then
-    ok "Found: ${TVAPP_SMALI#${WORKDIR}/}"
-    info "Spoofing device model as Chromecast in request header..."
-    python3 - "${TVAPP_SMALI}" << 'PYEOF'
+if [[ -n "${F1TV_MODEL_SPOOF:-}" && "${F1TV_MODEL_SPOOF}" != "0" ]]; then
+    info "Searching for TvApplication.smali..."
+    TVAPP_SMALI="$(find "${DECOMPILED}" -name 'TvApplication.smali' -path '*/avs/f1/*' -print -quit)"
+    if [[ -n "${TVAPP_SMALI}" ]]; then
+        ok "Found: ${TVAPP_SMALI#${WORKDIR}/}"
+        info "Spoofing device model as ${F1TV_MODEL_SPOOF} in request header..."
+        python3 - "${TVAPP_SMALI}" "${F1TV_MODEL_SPOOF}" << 'PYEOF'
 import sys
 
 smali_path = sys.argv[1]
+model = sys.argv[2]
+smali_model = model.replace('\\', '\\\\').replace('"', '\\"')
 with open(smali_path, 'r') as f:
     content = f.read()
 
-# Replace Build.MODEL read with hardcoded "chromecast" string
+# Replace Build.MODEL read with a hardcoded model string
 # Original: sget-object v1, Landroid/os/Build;->MODEL:Ljava/lang/String;
 # We replace the MODEL read + toLowerCase block with a const-string
 old = '    sget-object v1, Landroid/os/Build;->MODEL:Ljava/lang/String;'
-new = '    const-string v1, "Chromecast"'
+new = f'    const-string v1, "{smali_model}"'
 
 if old not in content:
     print("ERROR: Could not find Build.MODEL in getRequestHeader!", file=sys.stderr)
@@ -287,13 +355,16 @@ content = content.replace(old, new, 1)
 with open(smali_path, 'w') as f:
     f.write(content)
 
-print("Spoofed Build.MODEL as 'Chromecast' in request header")
+print(f"Spoofed Build.MODEL as '{model}' in request header")
 PYEOF
 
-    [[ $? -eq 0 ]] || die "Model spoof patch failed"
-    ok "Model spoof patch applied"
+        [[ $? -eq 0 ]] || die "Model spoof patch failed"
+        ok "Model spoof patch applied"
+    else
+        warn "TvApplication.smali not found, skipping model spoof"
+    fi
 else
-    warn "TvApplication.smali not found, skipping model spoof"
+    info "F1TV_MODEL_SPOOF disabled, keeping the device's real model in request header"
 fi
 
 # ─── Patch ClearVR decoder capabilities (force 4K tiled streaming) ─────────
@@ -303,10 +374,13 @@ DECODER_CAP_SMALI="$(find "${DECOMPILED}" -name 'DecoderCapability.smali' -path 
 if [[ -n "${DECODER_CAP_SMALI}" ]]; then
     ok "Found: ${DECODER_CAP_SMALI#${WORKDIR}/}"
     info "Patching ClearVR decoder capability reporting..."
-    python3 - "${DECODER_CAP_SMALI}" << 'PYEOF'
+    python3 - "${DECODER_CAP_SMALI}" "${F1TV_DECODER_TILE_SLOTS}" "${F1TV_DECODER_TILE_ROWS}" "${F1TV_DECODER_TILE_COLUMNS}" << 'PYEOF'
 import sys
 
 smali_path = sys.argv[1]
+tile_slots = int(sys.argv[2])
+tile_rows = int(sys.argv[3])
+tile_columns = int(sys.argv[4])
 with open(smali_path, 'r') as f:
     content = f.read()
 
@@ -316,29 +390,23 @@ with open(smali_path, 'r') as f:
 # causing the backend to serve a lower resolution tier (2880x1620 instead of 3840x2160).
 
 patches = [
-    # Override secureDecoderMaximumTileSlotCount: 0 → 16
+    # Override secureDecoderMaximumTileSlotCount: 0 → 16 (matches Oculus Go/Quest profiles)
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxNumberOfSecureHEVCSamples:I',
-        '    const/16 v2, 0x10',
-        'secureDecoderMaximumTileSlotCount → 16'
+        f'    const/16 v2, {hex(tile_slots)}',
+        f'secureDecoderMaximumTileSlotCount → {tile_slots}'
     ),
-    # Override maxTileRows: 0 → 5
+    # Override maxTileRows: 0 → 5 (matches Chromecast/Google TV profile)
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxTileRows:I',
-        '    const/4 v2, 0x5',
-        'maxTileRows → 5'
+        f'    const/4 v2, {hex(tile_rows)}',
+        f'maxTileRows → {tile_rows}'
     ),
-    # Override maxTileColumns: 0 → 5
+    # Override maxTileColumns: 0 → 5 (matches Chromecast/Google TV profile)
     (
         '    iget v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->maxTileColumns:I',
-        '    const/4 v2, 0x5',
-        'maxTileColumns → 5'
-    ),
-    # FORCE SDR: Override isHDR flag to false
-    (
-        '    iget-boolean v2, p0, Lcom/tiledmedia/clearvrdecoder/util/DecoderCapability;->isHDR:Z',
-        '    const/4 v2, 0x0',
-        'isHDR → False (Force SDR)'
+        f'    const/4 v2, {hex(tile_columns)}',
+        f'maxTileColumns → {tile_columns}'
     ),
 ]
 
@@ -358,7 +426,7 @@ if patched == 0:
 with open(smali_path, 'w') as f:
     f.write(content)
 
-print(f"Patched {patched}/4 ClearVR decoder capabilities")
+print(f"Patched {patched}/3 ClearVR decoder capabilities")
 PYEOF
 
     [[ $? -eq 0 ]] || die "ClearVR capability patch failed"
@@ -369,12 +437,13 @@ fi
 
 # ─── Disable NVIDIA post-process workaround in ClearVR ────────────────────
 
-info "Searching for Quirks.smali..."
-QUIRKS_SMALI="$(find "${DECOMPILED}" -name 'Quirks.smali' -path '*/tiledmedia/clearvrdecoder/*' -print -quit)"
-if [[ -n "${QUIRKS_SMALI}" ]]; then
-    ok "Found: ${QUIRKS_SMALI#${WORKDIR}/}"
-    info "Disabling NVIDIA no-post-process workaround..."
-    python3 - "${QUIRKS_SMALI}" << 'PYEOF'
+if [[ "${F1TV_DISABLE_NVIDIA_QUIRK:-0}" != "0" ]]; then
+    info "Searching for Quirks.smali..."
+    QUIRKS_SMALI="$(find "${DECOMPILED}" -name 'Quirks.smali' -path '*/tiledmedia/clearvrdecoder/*' -print -quit)"
+    if [[ -n "${QUIRKS_SMALI}" ]]; then
+        ok "Found: ${QUIRKS_SMALI#${WORKDIR}/}"
+        info "Disabling NVIDIA no-post-process workaround..."
+        python3 - "${QUIRKS_SMALI}" << 'PYEOF'
 import sys, re
 
 smali_path = sys.argv[1]
@@ -409,20 +478,39 @@ with open(smali_path, 'w') as f:
     f.write(content)
 PYEOF
 
-    [[ $? -eq 0 ]] || die "NVIDIA workaround patch failed"
-    ok "NVIDIA workaround patch applied"
+        [[ $? -eq 0 ]] || die "NVIDIA workaround patch failed"
+        ok "NVIDIA workaround patch applied"
+    else
+        warn "Quirks.smali not found, skipping NVIDIA workaround patch"
+    fi
 else
-    warn "Quirks.smali not found, skipping NVIDIA workaround patch"
+    info "Leaving NVIDIA no-post-process workaround untouched for this profile"
 fi
 
 # ─── Patch NRP blit mode to NATIVE_ANDROID_DIRECT_TO_VIEW ──────────────────
-# Forced patch: Dwingt NATIVE_ANDROID_DIRECT_TO_VIEW om EGL-rendering crashes
-# op Philips OLED schermen te voorkomen.
+#
+# Tiledmedia's default blit mode (AUTO_DETECT) routes decoded frames through
+# GPU tile composition via SurfaceTexture → EGL → swapBuffers. This causes
+# frame drops on weaker GPUs and may fail on devices that don't support
+# intermediate resolutions during the quality ramp (e.g. 2560x1620).
+# The SDK has a built-in NATIVE_ANDROID_DIRECT_TO_VIEW mode that bypasses
+# GPU composition and outputs the decoder directly to the SurfaceView.
+#
+# DEFAULT OFF. direct-to-view tags the output surface with the CONTENT's transfer
+# (HLG for F1 UHD) and does no gamut conversion. On a panel that accepts HDR10 but
+# not HLG the compositor can't switch modes and shows the BT.2020 frames through
+# an SDR/Rec.709 surface with no conversion — i.e. washed-out colours. The default
+# EGL/GL render path (this patch skipped) composites the tiles and does a correct
+# BT.2020→Rec.709 conversion, giving accurate 4K. Set F1TV_DIRECT_TO_VIEW=1 to
+# force direct-to-view on weak/Amlogic GPUs that drop frames on the GL path
+# (accepting the washed-out HDR look as the tradeoff).
 
 RENDER_CONFIG="$(find "${DECOMPILED}" -name 'RenderAPIConfig.smali' -path '*/tiledmedia/*' -print -quit 2>/dev/null || true)"
 
-if [[ -n "${RENDER_CONFIG}" && -f "${RENDER_CONFIG}" ]]; then
-    info "Forcing NRP blit mode to direct-to-view (mandatory for Philips OLED stability)..."
+if [[ "${F1TV_DIRECT_TO_VIEW:-0}" == "0" ]]; then
+    info "Using the EGL/GL render path for correct 4K colours (set F1TV_DIRECT_TO_VIEW=1 for weak/Amlogic GPUs)"
+elif [[ -n "${RENDER_CONFIG}" && -f "${RENDER_CONFIG}" ]]; then
+    info "Patching NRP blit mode to direct-to-view (opt-in, for weak/Amlogic GPUs)..."
     python3 - "${RENDER_CONFIG}" << 'PYEOF'
 import sys
 
@@ -431,6 +519,13 @@ with open(path, 'r') as f:
     content = f.read()
 
 # Patch getNRPTextureBlitMode() to always return NATIVE_ANDROID_DIRECT_TO_VIEW.
+# Original:
+#   iget-object v0, p0, ...->nrpTextureBlitMode
+#   return-object v0
+#
+# Patched:
+#   return NATIVE_ANDROID_DIRECT_TO_VIEW unconditionally
+
 old = """    iget-object v0, p0, Lcom/tiledmedia/clearvrview/RenderAPIConfig;->nrpTextureBlitMode:Lcom/tiledmedia/clearvrenums/NRPTextureBlitMode;
 
     return-object v0"""
@@ -447,27 +542,74 @@ content = content.replace(old, new, 1)
 
 with open(path, 'w') as f:
     f.write(content)
-print(f"   Patched {path}")
+print(f"  Patched {path}")
 PYEOF
 
-    [[ $? -eq 0 ]] && ok "NRP direct-to-view patch forced" || warn "NRP direct-to-view patch failed"
+    [[ $? -eq 0 ]] && ok "NRP direct-to-view patch applied (all devices)" || warn "NRP direct-to-view patch failed"
 else
     warn "RenderAPIConfig.smali not found, skipping direct-to-view patch"
 fi
 
-# ─── Force 4K display detection (DISABLED VOOR TEST) ─────────────
-# We skippen deze patch tijdelijk om te zien of het HDR-geflikker stopt.
+# ─── Force 4K display detection (lifts the 1.5x resolution cap) ─────────────
+#
+# Tiledmedia caps streaming resolution at ~1.5x the display size it detects.
+# On NVIDIA Shield (and similar) the SDK reads the 1080p UI surface, so it caps
+# tiles at 2880x1620 instead of 3840x2160 — the "can only select up to
+# 2880x1620" symptom (issue #9). Profiles can choose whether to target full
+# 2160p or a safer reduced target for TVs that cannot sustain full 4K decode.
 
 info "Searching for TrueTVDisplaySizeHelper.smali..."
 TRUE_TV_HELPER="$(find "${DECOMPILED}" -name 'TrueTVDisplaySizeHelper.smali' -path '*/tiledmedia/*' -print -quit)"
-
-# Ik heb de if-conditie aangepast naar 'false' zodat dit blok overgeslagen wordt
-if [[ -n "${TRUE_TV_HELPER}" && false ]]; then
+if [[ -n "${TRUE_TV_HELPER}" ]]; then
     ok "Found: ${TRUE_TV_HELPER#${WORKDIR}/}"
-    info "Skipping 4K display detection patch (Disabled for testing)..."
-    # (De rest van je python-script blijft hier staan, maar wordt niet uitgevoerd)
+    info "Forcing display size to ${F1TV_DISPLAY_WIDTH}x${F1TV_DISPLAY_HEIGHT}..."
+    python3 - "${TRUE_TV_HELPER}" "${F1TV_DISPLAY_WIDTH}" "${F1TV_DISPLAY_HEIGHT}" << 'PYEOF'
+import sys, re
+
+path = sys.argv[1]
+width = int(sys.argv[2])
+height = int(sys.argv[3])
+with open(path, 'r') as f:
+    content = f.read()
+
+# Replace getDefaultDisplaySize() body with a profile-selected Point.
+# Result is also cached in trueDisplaySize.
+pattern = (
+    r'\.method private static getDefaultDisplaySize\(Landroid/content/Context;\)Landroid/graphics/Point;'
+    r'.*?'
+    r'\.end method'
+)
+replacement = """.method private static getDefaultDisplaySize(Landroid/content/Context;)Landroid/graphics/Point;
+    .locals 3
+
+    # UHD Patch: report the profile-selected display target
+    new-instance v0, Landroid/graphics/Point;
+
+    const/16 v1, {width_hex}
+
+    const/16 v2, {height_hex}
+
+    invoke-direct {v0, v1, v2}, Landroid/graphics/Point;-><init>(II)V
+
+    sput-object v0, Lcom/tiledmedia/clearvrview/TrueTVDisplaySizeHelper;->trueDisplaySize:Landroid/graphics/Point;
+
+    return-object v0
+.end method""".format(width_hex=hex(width), height_hex=hex(height))
+
+content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
+if count == 0:
+    print("ERROR: getDefaultDisplaySize not found", file=sys.stderr)
+    sys.exit(1)
+
+with open(path, 'w') as f:
+    f.write(content)
+print(f"Patched getDefaultDisplaySize -> {width}x{height}")
+PYEOF
+
+    [[ $? -eq 0 ]] || die "4K display patch failed"
+    ok "4K display detection patch applied"
 else
-    info "Skipping 4K display detection patch as requested."
+    warn "TrueTVDisplaySizeHelper.smali not found, skipping 4K display patch"
 fi
 
 # ─── HLG/HDR unlock (default ON — required for the 2160p tier) ──────────────
@@ -487,7 +629,7 @@ fi
 # real display-capability probe (doesDisplaySupport) still runs, so SDR-only
 # panels fall back to SDR automatically. Set F1TV_HLG_BYPASS=0 to skip this patch.
 
-if [[ "${F1TV_HLG_BYPASS:-1}" != "0" && false ]]; then
+if [[ "${F1TV_HLG_BYPASS:-1}" != "0" ]]; then
     info "Patching HLG extension support (required for the 2160p HDR tier)..."
     EGL_RENDER="$(find "${DECOMPILED}" -name 'EGLRenderTarget.smali' -path '*/tiledmedia/*' -print -quit)"
     if [[ -n "${EGL_RENDER}" ]]; then
@@ -521,7 +663,7 @@ if count == 0:
 
 with open(path, 'w') as f:
     f.write(content)
-print(f"Patched getIsBt2020HlgExtensionSupported -> false")
+print(f"Patched getIsBt2020HlgExtensionSupported -> true")
 PYEOF
 
         [[ $? -eq 0 ]] || die "HLG bypass patch failed"
@@ -598,6 +740,8 @@ PYEOF
     else
         warn "RenderTargetConfig.smali not found, skipping PQ reroute"
     fi
+else
+    info "Skipping PQ reroute (direct-to-view/smooth profile does not use the EGL colour-conversion path)"
 fi
 
 # ─── Spoof display HDR capability (default ON — the 2160p unlock) ───────────
@@ -615,8 +759,36 @@ fi
 # (HDR10, or a clean SDR downconvert), the same path YouTube HLG uses on an HDR10
 # TV. On genuinely HDR-capable devices this is a no-op. Set F1TV_DISPLAY_HDR_SPOOF=0
 # to disable and fall back to stock behaviour (SDR-capable devices cap at 1620p).
-# ─── Spoof display HDR capability (DISABLED FOR TESTING) ─────────────
-info "Skipping display HDR spoof patch..."
+if [[ "${F1TV_DISPLAY_HDR_SPOOF:-1}" != "0" ]]; then
+    info "Forcing display HDR-type support (unlocks the 2160p tier)..."
+    DEVPARAMS="$(find "${DECOMPILED}" -name 'DeviceParameters.smali' -path '*/tiledmedia/*' -print -quit)"
+    if [[ -n "${DEVPARAMS}" ]]; then
+        ok "Found: ${DEVPARAMS#${WORKDIR}/}"
+        python3 - "${DEVPARAMS}" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+new = """.method private static doesDisplaySupport(Landroid/content/Context;I)Z
+    .locals 1
+
+    const/4 v0, 0x1
+
+    return v0
+.end method"""
+content, n = re.subn(r'\.method private static doesDisplaySupport\(Landroid/content/Context;I\)Z.*?\.end method', new, content, flags=re.DOTALL)
+if n != 1:
+    print(f"ERROR: doesDisplaySupport not found ({n})", file=sys.stderr); sys.exit(1)
+with open(path, 'w') as f:
+    f.write(content)
+print("doesDisplaySupport -> always true (display reports all HDR types)")
+PYEOF
+        [[ $? -eq 0 ]] || die "Display HDR spoof patch failed"
+        ok "Display HDR spoof patch applied"
+    else
+        warn "DeviceParameters.smali not found, skipping display HDR spoof"
+    fi
+fi
 
 # ─── Patch version name ─────────────────────────────────────────────────────
 
@@ -625,7 +797,7 @@ info "Patching version name..."
 # Patch apktool.yml (manifest versionName)
 APKTOOL_YML="${DECOMPILED}/apktool.yml"
 if [[ -f "${APKTOOL_YML}" ]]; then
-    sed -i 's/\(versionName: .*\)/\1-UHD/' "${APKTOOL_YML}"
+    sed -i "s/\(versionName: .*\)/\1${VERSION_SUFFIX}/" "${APKTOOL_YML}"
     ok "Manifest versionName updated"
 fi
 
@@ -633,13 +805,13 @@ fi
 BUILDCONFIG="$(find "${DECOMPILED}" -name 'BuildConfig.smali' -path '*/formulaone/*' -print -quit)"
 if [[ -n "${BUILDCONFIG}" ]]; then
     # VERSION_NAME is a const-string like: const-string v0, "3.0.47.1-SP153..."
-    sed -i '/:->VERSION_NAME:Ljava\/lang\/String;/,/const-string/{s/\(const-string [^,]*, "\)\([^"]*\)"/\1\2-UHD"/}' "${BUILDCONFIG}"
+    sed -i "/:->VERSION_NAME:Ljava\/lang\/String;/,/const-string/{s/\(const-string [^,]*, \"\)\([^\"]*\)\"/\1\2${VERSION_SUFFIX}\"/}" "${BUILDCONFIG}"
     ok "BuildConfig VERSION_NAME updated"
 else
     # Fallback: search all BuildConfig.smali files
     BUILDCONFIG="$(find "${DECOMPILED}" -name 'BuildConfig.smali' -print -quit)"
     if [[ -n "${BUILDCONFIG}" ]]; then
-        sed -i '/VERSION_NAME/s/\(const-string [^,]*, "\)\([^"]*\)"/\1\2-UHD"/' "${BUILDCONFIG}"
+        sed -i "/VERSION_NAME/s/\(const-string [^,]*, \"\)\([^\"]*\)\"/\1\2${VERSION_SUFFIX}\"/" "${BUILDCONFIG}"
         ok "BuildConfig VERSION_NAME updated (fallback)"
     else
         warn "BuildConfig.smali not found, skipping in-app version patch"
@@ -766,7 +938,7 @@ cp "${ALIGNED_DIR}"/*.apk "${OUTPUT_DIR}/"
 [[ -f "${INFO_JSON}" ]] && cp "${INFO_JSON}" "${OUTPUT_DIR}/"
 
 # Create a .apkm bundle (zip of all APKs + info.json)
-APKM_OUTPUT="${OUTPUT_DIR}/f1tv-uhd-patched.apkm"
+APKM_OUTPUT="${OUTPUT_DIR}/${OUTPUT_BASENAME}"
 (cd "${OUTPUT_DIR}" && zip -q "${APKM_OUTPUT}" *.apk info.json 2>/dev/null || zip -q "${APKM_OUTPUT}" *.apk)
 ok "Created patched bundle: ${APKM_OUTPUT}"
 
